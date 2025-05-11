@@ -1,0 +1,3 @@
+[submodule "src/transcription_service"]
+	path = src/transcription_service
+	url = https://github.com/m-bain/whisperX.git
