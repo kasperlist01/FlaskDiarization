@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+
+{% block title %}Media Summary Results{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm summary-card animate__animated animate__fadeIn">
+  <div class="card-header bg-white">
+    <h4 class="mb-0">Summary Results</h4>
+    <p class="text-muted mb-0 mt-2">File: {{ summary.filename }}</p>
+  </div>
+  <div class="card-body">
+    <div class="summary-content" id="summaryContent">
+      {{ summary.content }}
+    </div>
+    <div class="text-center mt-4">
+      <button class="btn btn-outline-primary" id="copyButton">
+        <i class="bi bi-clipboard"></i> Copy to Clipboard
+      </button>
+      <a href="{{ url_for('get_summary', filename=summary.filename) }}" class="btn btn-outline-secondary" id="downloadButton">
+        <i class="bi bi-download"></i> Download Summary
+      </a>
+      <a href="{{ url_for('index') }}" class="btn btn-outline-dark">
+        <i class="bi bi-arrow-left"></i> Back to Upload
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.getElementById('copyButton').addEventListener('click', function() {
+    const summaryText = document.getElementById('summaryContent').innerText;
+    navigator.clipboard.writeText(summaryText).then(function() {
+      // Show toast notification
+      const toast = new bootstrap.Toast(document.getElementById('toast'));
+      document.getElementById('toastTitle').textContent = 'Copied';
+      document.getElementById('toastMessage').textContent = 'Summary copied to clipboard';
+      toast.show();
+    });
+  });
+</script>
+{% endblock %}

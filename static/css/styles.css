@@ -1,0 +1,193 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap');
+@import url('https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css');
+
+:root {
+  --primary-color: #4e73df;
+  --success-color: #1cc88a;
+  --info-color: #36b9cc;
+  --warning-color: #f6c23e;
+  --danger-color: #e74a3b;
+  --light-color: #f8f9fc;
+  --dark-color: #5a5c69;
+  --transition-time: 0.3s;
+}
+
+body {
+  font-family: 'Poppins', sans-serif;
+  background-color: #f8f9fc;
+  color: #2e384d;
+  min-height: 100vh;
+  padding-bottom: 2rem;
+  overflow-y: hidden;
+  height: 100%;
+}
+
+.container {
+  max-width: 1140px;
+  margin: 0 auto;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* Card styling */
+.card {
+  border-radius: 12px;
+  border: none;
+  overflow: hidden;
+  transition: transform var(--transition-time), box-shadow var(--transition-time);
+}
+
+.card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+.upload-card {
+  background: linear-gradient(to bottom right, #ffffff, #f8f9fc);
+}
+
+.summary-card {
+  background-color: white;
+}
+
+/* Upload area styling */
+.upload-area {
+  border: 2px dashed #d1d3e2;
+  border-radius: 8px;
+  padding: 2.5rem;
+  background-color: rgba(78, 115, 223, 0.05);
+  transition: all var(--transition-time);
+  position: relative;
+  cursor: pointer;
+}
+
+.upload-area:hover {
+  border-color: var(--primary-color);
+  background-color: rgba(78, 115, 223, 0.08);
+}
+
+.upload-area.drag-over {
+  border-color: var(--success-color);
+  background-color: rgba(28, 200, 138, 0.08);
+}
+
+.upload-icon {
+  font-size: 3rem;
+  color: var(--primary-color);
+  display: block;
+}
+
+.upload-prompt p {
+  color: #858796;
+  margin-bottom: 1rem;
+}
+
+/* Selected file display */
+.selected-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.file-icon {
+  font-size: 2rem;
+  color: var(--primary-color);
+}
+
+.file-name {
+  margin: 0;
+  font-weight: 500;
+}
+
+/* Button styling */
+.btn {
+  border-radius: 6px;
+  font-weight: 500;
+  padding: 0.5rem 1.25rem;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.btn-primary:hover {
+  background-color: #3a5ecc;
+  border-color: #3a5ecc;
+}
+
+.btn-success {
+  background-color: var(--success-color);
+  border-color: var(--success-color);
+}
+
+.btn-success:hover {
+  background-color: #17a673;
+  border-color: #17a673;
+}
+
+/* Summary content styling */
+.summary-content {
+  padding: 1rem;
+  background-color: #f8f9fc;
+  border-radius: 8px;
+  min-height: 150px;
+}
+
+/* Animations */
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.pulse-animation {
+  animation: pulse 2s infinite;
+}
+
+/* Toast styling */
+.toast {
+  border-radius: 8px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* Loading state */
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  border-radius: 8px;
+  z-index: 10;
+}
+
+.loading-spinner {
+  width: 3rem;
+  height: 3rem;
+  border-width: 0.25rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .upload-area {
+    padding: 1.5rem;
+  }
+
+  .upload-icon {
+    font-size: 2.5rem;
+  }
+}

@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+
+{% block title %}Media Summarizer - Upload{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm upload-card animate__animated animate__fadeInUp">
+  <div class="card-body text-center p-5">
+    <i class="bi bi-cloud-arrow-up upload-icon mb-3"></i>
+    <h3 class="mb-4">Upload Your Media</h3>
+
+    <form id="uploadForm" action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data">
+      <div class="mb-4 upload-area" id="dropZone">
+        <input type="file" id="fileInput" name="file" class="d-none" accept="audio/*,video/*">
+        <div class="upload-prompt">
+          <p>Drag and drop files here or</p>
+          <button type="button" class="btn btn-primary px-4" id="browseButton">
+            Browse Files
+          </button>
+        </div>
+        <div class="selected-file d-none" id="fileInfo">
+          <i class="bi bi-file-earmark-play file-icon"></i>
+          <p class="file-name" id="fileName">filename.mp4</p>
+          <button type="button" class="btn btn-sm btn-outline-danger" id="removeFile">
+            <i class="bi bi-x"></i>
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-success btn-lg px-5" id="uploadButton">
+        <span class="spinner-border spinner-border-sm d-none" id="uploadSpinner" role="status" aria-hidden="true"></span>
+        <span id="uploadText">Upload & Summarize</span>
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
