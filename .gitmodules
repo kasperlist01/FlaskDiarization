@@ -1,3 +1,3 @@
-[submodule "src/transcription_service"]
-	path = src/transcription_service
+[submodule "src/transcriber_service/whisperx"]
+	path = src/transcriber_service/whisperx
 	url = https://github.com/m-bain/whisperX.git

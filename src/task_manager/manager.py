@@ -94,19 +94,6 @@ class TaskManager:
         """
         return self.db.get_task(task_id)
 
-    def get_task_status(self, task_id):
-        """
-        Получает статус задачи
-
-        Args:
-            task_id: Идентификатор задачи
-
-        Returns:
-            str: Статус задачи или None, если задача не найдена
-        """
-        task = self.db.get_task(task_id)
-        return task['status'] if task else None
-
     def get_full_task_info(self, task_id):
         """
         Получает полную информацию о задаче, включая транскрипцию и отчеты

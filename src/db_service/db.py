@@ -40,6 +40,26 @@ class DatabaseService:
             )
             ''')
 
+            # Таблица для хранения деталей транскрипции (с временными метками)
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transcription_details (
+                task_id TEXT PRIMARY KEY,
+                details TEXT,
+                completed_at TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+            )
+            ''')
+
+            # Таблица для хранения результатов диаризации
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS diarization_results (
+                task_id TEXT PRIMARY KEY,
+                result TEXT,
+                completed_at TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+            )
+            ''')
+
             # Таблица для хранения саммари
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS summaries (
@@ -88,7 +108,7 @@ class DatabaseService:
             if task_exists:
                 # Обновляем существующую задачу
                 cursor.execute('''
-                UPDATE tasks 
+                UPDATE tasks
                 SET status = ?, updated_at = ?, file_path = ?, options = ?
                 WHERE task_id = ?
                 ''', (status, now, file_path, json.dumps(options) if options else None, task_id))
@@ -108,7 +128,7 @@ class DatabaseService:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-            UPDATE tasks 
+            UPDATE tasks
             SET status = ?, updated_at = ?
             WHERE task_id = ?
             ''', (status, now, task_id))
@@ -149,6 +169,19 @@ class DatabaseService:
 
             conn.commit()
 
+    def save_transcription_details(self, task_id, details):
+        """Сохранение деталей транскрибации с временными метками"""
+        now = datetime.now().isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT OR REPLACE INTO transcription_details (task_id, details, completed_at)
+            VALUES (?, ?, ?)
+            ''', (task_id, json.dumps(details), now))
+
+            conn.commit()
+
     def get_transcription(self, task_id):
         """Получение транскрипции по ID задачи"""
         with self._get_connection() as conn:
@@ -161,6 +194,57 @@ class DatabaseService:
 
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def get_transcription_details(self, task_id):
+        """Получение деталей транскрипции с временными метками"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            SELECT details, completed_at
+            FROM transcription_details
+            WHERE task_id = ?
+            ''', (task_id,))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            result = dict(row)
+            if result['details']:
+                result['details'] = json.loads(result['details'])
+            return result['details']
+
+    def save_diarization_result(self, task_id, result):
+        """Сохранение результата диаризации (определения говорящих)"""
+        now = datetime.now().isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT OR REPLACE INTO diarization_results (task_id, result, completed_at)
+            VALUES (?, ?, ?)
+            ''', (task_id, json.dumps(result), now))
+
+            conn.commit()
+
+    def get_diarization_result(self, task_id):
+        """Получение результата диаризации по ID задачи"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            SELECT result, completed_at
+            FROM diarization_results
+            WHERE task_id = ?
+            ''', (task_id,))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            result = dict(row)
+            if result['result']:
+                result['result'] = json.loads(result['result'])
+            return result['result']
 
     def save_summary_chunk(self, task_id, chunk_index, summary):
         """Сохранение части саммари"""
@@ -224,6 +308,14 @@ class DatabaseService:
         if transcription:
             task_info['transcription'] = transcription
 
+        transcription_details = self.get_transcription_details(task_id)
+        if transcription_details:
+            task_info['transcription_details'] = transcription_details
+
+        diarization_result = self.get_diarization_result(task_id)
+        if diarization_result:
+            task_info['diarization_result'] = diarization_result
+
         summary_chunks = self.get_summary_chunks(task_id)
         if summary_chunks:
             task_info['summary_chunks'] = summary_chunks
@@ -233,3 +325,63 @@ class DatabaseService:
             task_info['final_report'] = final_report
 
         return task_info
+
+    def get_all_tasks(self, limit=10, offset=0, status=None):
+        """Получение списка всех задач с пагинацией"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = '''
+            SELECT task_id, status, created_at, updated_at, file_path
+            FROM tasks
+            '''
+            params = []
+
+            if status:
+                query += ' WHERE status = ?'
+                params.append(status)
+
+            query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def count_tasks(self, status=None):
+        """Подсчет общего количества задач"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = 'SELECT COUNT(*) as count FROM tasks'
+            params = []
+
+            if status:
+                query += ' WHERE status = ?'
+                params.append(status)
+
+            cursor.execute(query, params)
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+
+    def delete_task(self, task_id):
+        """Удаление задачи и всех связанных данных"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Удаляем связанные данные
+            tables = [
+                'transcriptions',
+                'transcription_details',
+                'diarization_results',
+                'summaries',
+                'final_reports'
+            ]
+
+            for table in tables:
+                cursor.execute(f'DELETE FROM {table} WHERE task_id = ?', (task_id,))
+
+            # Удаляем саму задачу
+            cursor.execute('DELETE FROM tasks WHERE task_id = ?', (task_id,))
+
+            conn.commit()
+            return cursor.rowcount > 0

@@ -1,12 +1,14 @@
+# src/aggregator/aggregator.py
+
 import logging
+import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 from src.db_service.db import DatabaseService
 from src.db_service.models import TaskStatus
 from src.task_manager.manager import TaskManager
-
-# Импортируем наши модули
+from src.summary_service import SummaryService
+from transcriber_service import TranscriberService
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO,
@@ -14,43 +16,40 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger('Aggregator')
 
 
-class TranscriptionAggregator:
+class TranscriberAggregator:
     """
     Оркестратор процесса транскрибации и создания саммари
     Координирует работу различных сервисов и отслеживает статус задачи
     """
 
     def __init__(self, db_service=None, task_manager=None,
-                 transcription_service=None, summary_service=None):
+                 transcriber_service=None, summary_service=None):
         """
         Инициализация оркестратора
 
         Args:
             db_service: Сервис базы данных
             task_manager: Менеджер задач
-            transcription_service: Сервис транскрибации
+            transcriber_service: Сервис транскрибации
             summary_service: Сервис создания саммари
         """
         self.db = db_service or DatabaseService()
         self.task_manager = task_manager or TaskManager(db_service=self.db)
-        self.transcription_service = transcription_service
-        self.summary_service = summary_service
-
-        # Пул потоков для асинхронного выполнения задач
-        self.executor = ThreadPoolExecutor(max_workers=5)
+        self.transcriber_service = transcriber_service or TranscriberService()
+        self.summary_service = summary_service or SummaryService()
 
     def process_task(self, task_id):
         """
-        Запускает обработку задачи асинхронно
+        Запускает обработку задачи
 
         Args:
             task_id: Идентификатор задачи
 
         Returns:
-            future: Объект Future для отслеживания выполнения
+            bool: True если задача успешно обработана, False в противном случае
         """
         logger.info(f"Starting processing task {task_id}")
-        return self.executor.submit(self._process_task_workflow, task_id)
+        return self._process_task_workflow(task_id)
 
     def _process_task_workflow(self, task_id):
         """
@@ -70,9 +69,17 @@ class TranscriptionAggregator:
                 return False
 
             # Шаг 1: Транскрибация
-            self._run_transcription(task_id, task['file_path'], task.get('options', {}))
+            self._run_transcriber(task_id, task['file_path'], task.get('options', {}))
 
-            # Шаг 2: Саммаризация
+            self.transcriber_service.cleanup()
+
+            # Шаг 2: Диаризация
+            self._run_diarization(task_id, task['file_path'], task.get('options', {}))
+
+            self.transcriber_service.cleanup()
+            self._cleanup_audio_file(task['file_path'])
+
+            # Шаг 3: Суммаризация
             transcript = self.db.get_transcription(task_id)
             if not transcript:
                 logger.error(f"Transcription for task {task_id} not found")
@@ -81,7 +88,7 @@ class TranscriptionAggregator:
 
             self._run_summarization(task_id, transcript['transcript'])
 
-            # Шаг 3: Финализация (создание итогового отчета)
+            # Шаг 4: Финализация (создание итогового отчета)
             self._run_finalization(task_id)
 
             # Отмечаем задачу как завершенную
@@ -94,7 +101,7 @@ class TranscriptionAggregator:
             self.task_manager.update_task_status(task_id, TaskStatus.FAILED)
             return False
 
-    def _run_transcription(self, task_id, file_path, options):
+    def _run_transcriber(self, task_id, file_path, options):
         """
         Запускает процесс транскрибации
 
@@ -103,23 +110,68 @@ class TranscriptionAggregator:
             file_path: Путь к аудиофайлу
             options: Опции транскрибации
         """
-        logger.info(f"Starting transcription for task {task_id}")
+        logger.info(f"Starting transcriber for task {task_id}")
         self.task_manager.update_task_status(task_id, TaskStatus.TRANSCRIBING)
 
-        if self.transcription_service:
-            # Вызываем сервис транскрибации
-            transcript = self.transcription_service.transcribe(file_path, options)
+        try:
+            batch_size = options.get('batch_size', 16)
+            language = options.get('language', None)
 
-            # Сохраняем результат
-            self.db.save_transcription(task_id, transcript)
+            result = self.transcriber_service.transcribe(
+                file_path,
+                batch_size=batch_size,
+                language=language
+            )
+
+            # Извлекаем полный текст транскрипции из сегментов
+            full_transcript = ""
+            for segment in result.get("segments", []):
+                full_transcript += segment.get("text", "") + " "
+
+            self.db.save_transcription(task_id, full_transcript)
+
+            self.db.save_transcription_details(task_id, result)
+
             self.task_manager.update_task_status(task_id, TaskStatus.TRANSCRIBED)
             logger.info(f"Transcription completed for task {task_id}")
-        else:
-            # Для тестирования, если сервис не настроен
-            logger.warning("Transcription service not configured, using mock data")
-            time.sleep(2)  # Имитация работы
-            self.db.save_transcription(task_id, "This is a mock transcript for testing purposes.")
-            self.task_manager.update_task_status(task_id, TaskStatus.TRANSCRIBED)
+
+        except Exception as e:
+            logger.exception(f"Error during transcription: {str(e)}")
+            self.task_manager.update_task_status(task_id, TaskStatus.FAILED)
+            raise
+
+    def _run_diarization(self, task_id, file_path, options):
+        """
+        Запускает процесс диаризации (определение говорящих)
+
+        Args:
+            task_id: Идентификатор задачи
+            file_path: Путь к аудиофайлу
+            options: Опции диаризации
+        """
+        logger.info(f"Starting diarization for task {task_id}")
+
+        try:
+            transcription_details = self.db.get_transcription_details(task_id)
+            if not transcription_details:
+                logger.warning(f"No transcription details found for task {task_id}, skipping diarization")
+                return
+
+            result_with_speakers = self.transcriber_service.diarize(
+                file_path,
+                transcription_details,
+                hf_token=''
+            )
+
+            # Сохраняем результат диаризации
+            self.db.save_diarization_result(task_id, result_with_speakers)
+
+            logger.info(f"Diarization completed for task {task_id}")
+
+        except Exception as e:
+            logger.exception(f"Error during diarization: {str(e)}")
+            # Не прерываем процесс, если диаризация не удалась
+            # Просто логируем ошибку и продолжаем
 
     def _run_summarization(self, task_id, transcript):
         """
@@ -132,7 +184,7 @@ class TranscriptionAggregator:
         logger.info(f"Starting summarization for task {task_id}")
         self.task_manager.update_task_status(task_id, TaskStatus.SUMMARIZING)
 
-        if self.summary_service:
+        try:
             # Разбиваем транскрипт на части, если он большой
             chunks = self._split_transcript(transcript)
 
@@ -143,12 +195,11 @@ class TranscriptionAggregator:
 
             self.task_manager.update_task_status(task_id, TaskStatus.SUMMARIZED)
             logger.info(f"Summarization completed for task {task_id}")
-        else:
-            # Для тестирования
-            logger.warning("Summary service not configured, using mock data")
-            time.sleep(2)  # Имитация работы
-            self.db.save_summary_chunk(task_id, 0, "This is a mock summary for testing purposes.")
-            self.task_manager.update_task_status(task_id, TaskStatus.SUMMARIZED)
+
+        except Exception as e:
+            logger.exception(f"Error during summarization: {str(e)}")
+            self.task_manager.update_task_status(task_id, TaskStatus.FAILED)
+            raise
 
     def _run_finalization(self, task_id):
         """
@@ -167,8 +218,18 @@ class TranscriptionAggregator:
             logger.error(f"No summary chunks found for task {task_id}")
             return
 
+        # Получаем результат с диаризацией, если есть
+        diarization_result = self.db.get_diarization_result(task_id)
+
+        # Получаем детали транскрипции с временными метками
+        transcription_details = self.db.get_transcription_details(task_id)
+
         # Объединяем части в финальный отчет
-        final_report = self._compile_final_report(summary_chunks)
+        final_report = self._compile_final_report(
+            summary_chunks,
+            diarization_result,
+            transcription_details
+        )
 
         # Сохраняем финальный отчет
         self.db.save_final_report(task_id, final_report)
@@ -205,29 +266,58 @@ class TranscriptionAggregator:
 
         return chunks
 
-    def _compile_final_report(self, summary_chunks):
+    def _compile_final_report(self, summary_chunks, diarization_result=None, transcription_details=None):
         """
         Компилирует финальный отчет из частей саммари
 
         Args:
             summary_chunks: Список частей саммари
+            diarization_result: Результат диаризации (определение говорящих)
+            transcription_details: Детали транскрипции с временными метками
 
         Returns:
             str: Финальный отчет
         """
         # Объединяем все части в один отчет
-        # В реальном приложении здесь может быть более сложная логика
         summaries = [chunk['summary'] for chunk in summary_chunks]
 
         report = "# Итоговый отчет о разговоре\n\n"
 
-        # Добавляем каждую часть саммари
+        # Добавляем краткое саммари
+        report += "## Краткое содержание\n\n"
         for i, summary in enumerate(summaries):
             if i > 0:
-                report += "\n\n## Часть " + str(i + 1) + "\n\n"
+                report += "\n\n"
             report += summary
 
+        # Добавляем полную транскрипцию с временными метками и говорящими
+        if transcription_details and 'segments' in transcription_details:
+            report += "\n\n## Полная транскрипция\n\n"
+
+            for segment in transcription_details['segments']:
+                start_time = self._format_time(segment.get('start', 0))
+                end_time = self._format_time(segment.get('end', 0))
+                text = segment.get('text', '').strip()
+                speaker = segment.get('speaker', 'Говорящий')
+
+                # Добавляем временные метки и идентификатор говорящего
+                report += f"[{start_time} - {end_time}] **{speaker}**: {text}\n\n"
+
         return report
+
+    def _format_time(self, seconds):
+        """
+        Форматирует время в секундах в формат MM:SS
+
+        Args:
+            seconds: Время в секундах
+
+        Returns:
+            str: Отформатированное время
+        """
+        minutes = int(seconds) // 60
+        seconds = int(seconds) % 60
+        return f"{minutes:02d}:{seconds:02d}"
 
     def get_task_progress(self, task_id):
         """
@@ -267,3 +357,19 @@ class TranscriptionAggregator:
                 progress['final_report_completed'] = final_report['completed_at']
 
         return progress
+
+    def _cleanup_audio_file(self, file_path):
+        """
+        Удаляет аудиофайл после обработки
+
+        Args:
+            file_path: Путь к аудиофайлу
+        """
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Successfully deleted audio file: {file_path}")
+            else:
+                logger.warning(f"Audio file not found for deletion: {file_path}")
+        except Exception as e:
+            logger.error(f"Error deleting audio file {file_path}: {str(e)}")
