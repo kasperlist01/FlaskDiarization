@@ -80,16 +80,13 @@ class TranscriberAggregator:
             self._cleanup_audio_file(task['file_path'])
 
             # Шаг 3: Суммаризация
-            transcript = self.db.get_transcription(task_id)
+            transcript = self.db.get_diarization_result(task_id)
             if not transcript:
                 logger.error(f"Transcription for task {task_id} not found")
                 self.task_manager.update_task_status(task_id, TaskStatus.FAILED)
                 return False
 
-            self._run_summarization(task_id, transcript['transcript'])
-
-            # Шаг 4: Финализация (создание итогового отчета)
-            self._run_finalization(task_id)
+            self._run_summarization(task_id, transcript['segments'])
 
             # Отмечаем задачу как завершенную
             self.task_manager.update_task_status(task_id, TaskStatus.COMPLETED)
@@ -114,7 +111,7 @@ class TranscriberAggregator:
         self.task_manager.update_task_status(task_id, TaskStatus.TRANSCRIBING)
 
         try:
-            batch_size = options.get('batch_size', 16)
+            batch_size = options.get('batch_size', 24)
             language = options.get('language', None)
 
             result = self.transcriber_service.transcribe(
@@ -160,7 +157,7 @@ class TranscriberAggregator:
             result_with_speakers = self.transcriber_service.diarize(
                 file_path,
                 transcription_details,
-                hf_token=''
+                # hf_token=''
             )
 
             # Сохраняем результат диаризации
@@ -185,13 +182,8 @@ class TranscriberAggregator:
         self.task_manager.update_task_status(task_id, TaskStatus.SUMMARIZING)
 
         try:
-            # Разбиваем транскрипт на части, если он большой
-            chunks = self._split_transcript(transcript)
-
-            # Обрабатываем каждую часть
-            for i, chunk in enumerate(chunks):
-                summary = self.summary_service.create_summary(chunk)
-                self.db.save_summary_chunk(task_id, i, summary)
+            summary = self.summary_service.create_summary(transcript)
+            self.db.save_summary(task_id, summary)
 
             self.task_manager.update_task_status(task_id, TaskStatus.SUMMARIZED)
             logger.info(f"Summarization completed for task {task_id}")
@@ -201,123 +193,6 @@ class TranscriberAggregator:
             self.task_manager.update_task_status(task_id, TaskStatus.FAILED)
             raise
 
-    def _run_finalization(self, task_id):
-        """
-        Создает финальный отчет на основе саммари
-
-        Args:
-            task_id: Идентификатор задачи
-        """
-        logger.info(f"Creating final report for task {task_id}")
-        self.task_manager.update_task_status(task_id, TaskStatus.FINALIZING)
-
-        # Получаем все части саммари
-        summary_chunks = self.db.get_summary_chunks(task_id)
-
-        if not summary_chunks:
-            logger.error(f"No summary chunks found for task {task_id}")
-            return
-
-        # Получаем результат с диаризацией, если есть
-        diarization_result = self.db.get_diarization_result(task_id)
-
-        # Получаем детали транскрипции с временными метками
-        transcription_details = self.db.get_transcription_details(task_id)
-
-        # Объединяем части в финальный отчет
-        final_report = self._compile_final_report(
-            summary_chunks,
-            diarization_result,
-            transcription_details
-        )
-
-        # Сохраняем финальный отчет
-        self.db.save_final_report(task_id, final_report)
-        logger.info(f"Final report created for task {task_id}")
-
-    def _split_transcript(self, transcript, max_chunk_size=5000):
-        """
-        Разбивает транскрипт на части для обработки
-
-        Args:
-            transcript: Полный текст транскрипции
-            max_chunk_size: Максимальный размер части в символах
-
-        Returns:
-            list: Список частей транскрипта
-        """
-        # Простой алгоритм разбиения по размеру
-        if len(transcript) <= max_chunk_size:
-            return [transcript]
-
-        chunks = []
-        sentences = transcript.split('. ')
-        current_chunk = ""
-
-        for sentence in sentences:
-            if len(current_chunk) + len(sentence) + 2 <= max_chunk_size:
-                current_chunk += sentence + ". "
-            else:
-                chunks.append(current_chunk.strip())
-                current_chunk = sentence + ". "
-
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-
-        return chunks
-
-    def _compile_final_report(self, summary_chunks, diarization_result=None, transcription_details=None):
-        """
-        Компилирует финальный отчет из частей саммари
-
-        Args:
-            summary_chunks: Список частей саммари
-            diarization_result: Результат диаризации (определение говорящих)
-            transcription_details: Детали транскрипции с временными метками
-
-        Returns:
-            str: Финальный отчет
-        """
-        # Объединяем все части в один отчет
-        summaries = [chunk['summary'] for chunk in summary_chunks]
-
-        report = "# Итоговый отчет о разговоре\n\n"
-
-        # Добавляем краткое саммари
-        report += "## Краткое содержание\n\n"
-        for i, summary in enumerate(summaries):
-            if i > 0:
-                report += "\n\n"
-            report += summary
-
-        # Добавляем полную транскрипцию с временными метками и говорящими
-        if transcription_details and 'segments' in transcription_details:
-            report += "\n\n## Полная транскрипция\n\n"
-
-            for segment in transcription_details['segments']:
-                start_time = self._format_time(segment.get('start', 0))
-                end_time = self._format_time(segment.get('end', 0))
-                text = segment.get('text', '').strip()
-                speaker = segment.get('speaker', 'Говорящий')
-
-                # Добавляем временные метки и идентификатор говорящего
-                report += f"[{start_time} - {end_time}] **{speaker}**: {text}\n\n"
-
-        return report
-
-    def _format_time(self, seconds):
-        """
-        Форматирует время в секундах в формат MM:SS
-
-        Args:
-            seconds: Время в секундах
-
-        Returns:
-            str: Отформатированное время
-        """
-        minutes = int(seconds) // 60
-        seconds = int(seconds) % 60
-        return f"{minutes:02d}:{seconds:02d}"
 
     def get_task_progress(self, task_id):
         """
@@ -373,3 +248,11 @@ class TranscriberAggregator:
                 logger.warning(f"Audio file not found for deletion: {file_path}")
         except Exception as e:
             logger.error(f"Error deleting audio file {file_path}: {str(e)}")
+
+
+
+if __name__ == '__main__':
+    t = TranscriberAggregator()
+    transcript = ''
+    task_id = ''
+    t._run_summarization(task_id, transcript)

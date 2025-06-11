@@ -1,9 +1,9 @@
 import os
-import uuid
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
 from src.task_manager.manager import TaskManager
 from src.aggregator.aggregator import TranscriberAggregator
-
+from src.db_service.models import TaskStatus
+import threading
 app = Flask(__name__)
 
 # Создаем директорию для загрузок, если она не существует
@@ -43,10 +43,9 @@ def upload_file():
         'language': request.form.get('language', None)
     })
 
-    # Запускаем обработку задачи напрямую (без многопоточности)
-    aggregator.process_task(task_id)
-
-    # Перенаправляем на страницу просмотра результатов
+    thread = threading.Thread(target=aggregator.process_task, args=(task_id,))
+    thread.daemon = True
+    thread.start()
     return redirect(url_for('view_summary', task_id=task_id))
 
 
@@ -62,20 +61,20 @@ def view_summary(task_id):
     # Проверяем статус задачи
     status = task.get('status')
 
-    if status == 'completed':
+    if status == TaskStatus.COMPLETED.value:
         # Получаем финальный отчет
         task_info = task_manager.get_full_task_info(task_id)
-        final_report = task_info.get('final_report', {})
+        final_report = task_info.get('summary', {})
 
         summary = {
             'filename': os.path.basename(task.get('file_path', 'Unknown file')),
-            'content': final_report.get('report', 'No summary available'),
+            'content': final_report.get('summary', 'No summary available'),
             'task_id': task_id,
             'status': status
         }
         return render_template('summary.html', summary=summary)
 
-    elif status == 'failed':
+    elif status == TaskStatus.FAILED.value:
         summary = {
             'filename': os.path.basename(task.get('file_path', 'Unknown file')),
             'content': 'Processing failed. Please try again.',
@@ -119,11 +118,11 @@ def get_summary(task_id):
         return jsonify({'error': 'Task not found'}), 404
 
     task_info = task_manager.get_full_task_info(task_id)
-    final_report = task_info.get('final_report', {})
+    final_report = task_info.get('summary', {})
 
     summary = {
         'filename': os.path.basename(task.get('file_path', 'Unknown file')),
-        'content': final_report.get('report', 'No summary available'),
+        'content': final_report.get('summary', 'No summary available'),
         'status': task.get('status'),
         'timestamp': task.get('updated_at')
     }
@@ -146,4 +145,4 @@ def page_not_found(e):
 
 
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0', port=5000)

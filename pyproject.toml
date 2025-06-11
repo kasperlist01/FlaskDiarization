@@ -1,7 +1,7 @@
 [project]
 name = "flaskdiarization"
 version = "0.1.0"
-description = "Add your description here"
+description = "Flask application for audio transcription and diarization"
 requires-python = ">=3.10"
 dependencies = [
     "flask>=3.1.0",
@@ -12,7 +12,13 @@ dependencies = [
     "onnxruntime>=1.19",
     "pandas>=2.2.3",
     "pyannote-audio>=3.3.2",
-    "torch>=2.5.1",
-    "torchaudio>=2.5.1",
-    "transformers>=4.48.0",
+    "httpx>=0.27.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.1",
+    "ollama>=0.4.8",
+    "anthropic>=0.51.0",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

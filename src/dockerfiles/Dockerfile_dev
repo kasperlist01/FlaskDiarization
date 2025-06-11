@@ -1,0 +1,20 @@
+FROM nvidia/cuda:12.8.0-base-ubuntu22.04
+
+RUN apt-get update && apt-get install -y \
+        python3.10 python3-pip python3-dev ffmpeg git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+WORKDIR /app
+
+COPY pyproject.toml ./
+COPY . .
+
+RUN pip install --no-cache-dir \
+        --pre torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/nightly/cu128
+
+RUN pip install --no-cache-dir .
+
+EXPOSE 5000

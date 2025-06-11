@@ -1,74 +1,179 @@
-# src/summary_service/summary_service.py
+import json
 import logging
-from typing import List, Dict, Any
+import os
+from typing import Dict, Any, List
+
+import requests
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 class SummaryService:
-    """Сервис для создания саммари текста транскрибации"""
+    """
+    Создаёт многоуровневое саммари созвона.
 
-    def __init__(self):
-        """Инициализация сервиса суммаризации"""
-        logger.info("Initializing SummaryService")
+    Алгоритм:
+      1. Краткое содержание встречи;
+      2. Темы & задачи (текст + JSON);
+      3. Дедлайны для каждой задачи (последняя озвученная дата).
+    """
 
-    def create_summary(self, transcript: str) -> str:
-        """
-        Создание саммари из текста транскрибации
+    def __init__(self) -> None:
+        self.api_url: str = os.getenv("OPENAI_API_URL", "http://localhost:8000/v1/chat/completions")
+        self.model: str = os.getenv("SUMMARY_MODEL", "claude-3-7-sonnet-20250219")
+        self.temperature: float = float(os.getenv("SUMMARY_TEMPERATURE", "0.7"))
 
-        Args:
-            transcript: Текст транскрибации
+    def _chat(
+        self, messages: List[Dict[str, str]]) -> str:
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "stream": False,
+        }
+        logger.debug("→ LLM payload: %s", payload)
 
-        Returns:
-            str: Саммари текста
-        """
-        try:
-            logger.info("Creating summary from transcript")
+        resp = requests.post(self.api_url, json=payload, proxies={"http": None, "https": None})
+        resp.raise_for_status()
 
-            # В реальном приложении здесь будет вызов модели суммаризации
-            # Например, с использованием трансформеров или API OpenAI
+        data = resp.json()
+        answer = data["choices"][0]["message"]["content"].strip()
+        logger.debug("← LLM answer: %s", answer)
+        return answer
 
-            # Демонстрационная версия - возвращаем первые 200 символов
-            if len(transcript) > 200:
-                summary = transcript[:200] + "... (summary continues)"
-            else:
-                summary = transcript
+    # ------------------------------------------------------------------
+    # STEP‑1 ▸ Краткое содержание
+    # ------------------------------------------------------------------
+    def _brief_summary(self, transcript: list) -> str:
+        return self._chat(
+            [
+                {
+                    "role": "user",
+                    "content": "Ты — ассистент, сделай саммари, что произошло на созвоне.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Проанализируй следующий транскрипт и составь Саммари созвона по блоками"
+                        "укажи временные метки ключевых моментов (начало обсуждения тем, решений и важных задач).\n\n"
+                        "Формат:\n"
+                        "<Саммари(вмеру подробное) каждой темы>\n"
+                        "Временные метки:\n"
+                        "- [12:34] Обсуждение <тема>\n"
+                        "- [23:10] Принято решение <резюме>\n"
+                        "\nТранскрипт:\n"
+                        f"{transcript}"
+                    ),
+                },
+            ],
+        )
 
-            return summary
+    # STEP‑2 ▸ Темы + задачи + дедлайны + временные метки
+    def _topics_and_tasks(self, transcript: list) -> str:
+        return self._chat(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Ты — аналитик встреч. Твоя задача — извлечь все темы, задачи, дедлайны и временные метки из транскрипта."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Сделай следующее:\n"
+                        "1. Выдели темы обсуждения\n"
+                        "2. Для каждой темы укажи задачи, их дедлайны (если есть) и временные метки\n"
+                        "\nФормат:\n"
+                        "{\n"
+                        "  \"topics\": [\n"
+                        "    {\n"
+                        "      \"name\": \"<тема>\",\n"
+                        "      \"timestamp\": \"<00:12:34>\",\n"
+                        "      \"summary\": \"<краткое содержание темы>\",\n"
+                        "      \"tasks\": [\n"
+                        "        {\n"
+                        "          \"title\": \"<задача>\",\n"
+                        "          \"date\": \"<дедлайн или 'Дедлайн не установлен'>\",\n"
+                        "          \"deadline_timestamp\": \"<00:15:20>\"  # если есть\n"
+                        "        }\n"
+                        "      ]\n"
+                        "    }\n"
+                        "  ]\n"
+                        "}\n"
+                        "Никакого другого текста после JSON.\n\n"
+                        f"Транскрипт:\n{transcript}"
+                    ),
+                },
+            ],
+        )
 
-        except Exception as e:
-            logger.exception(f"Error creating summary: {str(e)}")
-            return "Failed to create summary due to an error."
+    # STEP‑3 ▸ Расширенный анализ дедлайнов с цитатами и метками
+    def _deadlines_for_tasks(self, transcript: list, topics: str) -> str:
+        return self._chat(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Ты — аналитик, специализирующийся на извлечении информации о сроках выполнения задач из транскриптов совещаний."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Проанализируй транскрипт и найди дедлайны для каждой темы из списка. "
+                        "Для каждой темы:\n"
+                        "1. Укажи краткое описание (summary)\n"
+                        "2. Отметь временные метки начала темы и дедлайнов\n"
+                        "3. Для каждой задачи покажи её дедлайн и контекст цитаты\n\n"
+                        "Формат:\n"
+                        "## <Название темы> [начало: 00:12:34, конец: 00:23:10]\n"
+                        "- Summary: <краткое описание обсуждения>\n"
+                        "- Deadlines:\n"
+                        "  - Задача: <название задачи>\n"
+                        "    - Дата: <дата или 'Дедлайн не установлен'>\n"
+                        "    - Метка: <00:15:20>\n"
+                        "    - Контекст: \"<цитата из транскрипта>\"\n"
+                        "\nТранскрипт:\n"
+                        f"{transcript}\n\nТемы:\n{topics}"
+                    ),
+                },
+            ],
+        )
 
-    def create_structured_summary(self, segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Создание структурированного саммари из сегментов транскрибации
+    # ------------------------------------------------------------------
+    # PUBLIC ▸ create_summary
+    # ------------------------------------------------------------------
+    def create_summary(self, transcript: dict[any, any]) -> str:
+        cleaned_data = []
+        for item in transcript:
+            cleaned_item = {k: v for k, v in item.items() if k != 'words'}
+            # Преобразование временных меток
+            cleaned_item['start'] = format_time(cleaned_item['start'])
+            cleaned_item['end'] = format_time(cleaned_item['end'])
+            cleaned_data.append(cleaned_item)
+        logger.info("[Summary] 1/3 — краткое содержание")
+        brief = self._brief_summary(cleaned_data)
 
-        Args:
-            segments: Список сегментов транскрибации
+        logger.info("[Summary] 2/3 — темы и задачи")
+        topics = self._topics_and_tasks(cleaned_data)
 
-        Returns:
-            Dict: Структурированное саммари
-        """
-        try:
-            logger.info("Creating structured summary from segments")
+        logger.info("[Summary] 3/3 — дедлайны")
+        deadlines = self._deadlines_for_tasks(cleaned_data, topics)
 
-            # Объединяем весь текст для общего саммари
-            full_text = " ".join([segment.get("text", "") for segment in segments])
+        # Сборка отчёта
+        parts: list[str] = [
+            brief,
+            deadlines,
+        ]
 
-            # Создаем саммари
-            summary = self.create_summary(full_text)
+        report = "\n".join(parts).strip()
+        logger.info("[Summary] Report ready (%d chars)", len(report))
+        return report
 
-            # Можно добавить выделение ключевых моментов, тем и т.д.
-            key_points = ["Point 1 from transcript", "Point 2 from transcript"]
-
-            return {
-                "summary": summary,
-                "key_points": key_points,
-                "segment_count": len(segments),
-                "duration": segments[-1]["end"] if segments else 0
-            }
-
-        except Exception as e:
-            logger.exception(f"Error creating structured summary: {str(e)}")
-            return {"summary": "Failed to create summary due to an error."}
+def format_time(seconds) -> str:
+    """Преобразует секунды в формат мм:сс"""
+    minutes = int(seconds // 60)
+    seconds = int(seconds % 60)
+    return f"{minutes:02d}:{seconds:02d}"

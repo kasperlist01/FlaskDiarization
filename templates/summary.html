@@ -9,10 +9,54 @@
     <p class="text-muted mb-0 mt-2">File: {{ summary.filename }}</p>
   </div>
   <div class="card-body">
-    <div class="summary-content" id="summaryContent">
-      {{ summary.content }}
+    {% if processing %}
+    <div id="processing-status">
+      <div class="text-center mb-4">
+        <div class="progress-tracker">
+          <div class="progress mb-3">
+            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+          </div>
+          <div class="status-steps">
+            <div class="step" id="step-transcribing">
+              <div class="step-icon">
+                <i class="bi bi-mic"></i>
+              </div>
+              <div class="step-label">Transcribing</div>
+            </div>
+            <div class="step" id="step-aligning">
+              <div class="step-icon">
+                <i class="bi bi-align-center"></i>
+              </div>
+              <div class="step-label">Aligning</div>
+            </div>
+            <div class="step" id="step-diarizing">
+              <div class="step-icon">
+                <i class="bi bi-people"></i>
+              </div>
+              <div class="step-label">Speaker Diarization</div>
+            </div>
+            <div class="step" id="step-summarizing">
+              <div class="step-icon">
+                <i class="bi bi-file-text"></i>
+              </div>
+              <div class="step-label">Summarizing</div>
+            </div>
+          </div>
+        </div>
+        <div class="mt-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+          <p class="mt-3" id="status-message">Processing your file...</p>
+        </div>
+      </div>
     </div>
-    <div class="text-center mt-4">
+    {% endif %}
+
+    <div class="summary-content markdown-body {% if processing %}d-none{% endif %}" id="summaryContent">
+      <!-- Здесь будет отрендеренный markdown -->
+    </div>
+    <div class="text-center mt-4 {% if processing %}d-none{% endif %}" id="summary-actions">
       <button class="btn btn-outline-primary" id="copyButton">
         <i class="bi bi-clipboard"></i> Copy to Clipboard
       </button>
@@ -25,37 +69,94 @@
     </div>
   </div>
 </div>
-
-{% if processing %}
-<div class="card shadow-sm mt-4">
-  <div class="card-body text-center">
-    <div class="spinner-border text-primary" role="status">
-      <span class="visually-hidden">Loading...</span>
-    </div>
-    <p class="mt-3">Your file is being processed. This page will refresh automatically...</p>
-  </div>
-</div>
-
-<script>
-  // Auto-refresh page every 5 seconds when processing
-  setTimeout(function() {
-    window.location.reload();
-  }, 5000);
-</script>
-{% endif %}
 {% endblock %}
 
 {% block extra_js %}
 <script>
-  document.getElementById('copyButton').addEventListener('click', function() {
-    const summaryText = document.getElementById('summaryContent').innerText;
-    navigator.clipboard.writeText(summaryText).then(function() {
-      // Show toast notification
-      const toast = new bootstrap.Toast(document.getElementById('toast'));
-      document.getElementById('toastTitle').textContent = 'Copied';
-      document.getElementById('toastMessage').textContent = 'Summary copied to clipboard';
-      toast.show();
-    });
+  document.addEventListener('DOMContentLoaded', function() {
+    {% if not processing %}
+      // Получаем исходный текст с markdown-разметкой
+      const markdownContent = `{{ summary.content|safe }}`;
+
+      // Рендерим markdown в HTML
+      const summaryContentElement = document.getElementById('summaryContent');
+      if (summaryContentElement) {
+        summaryContentElement.innerHTML = marked.parse(markdownContent);
+      }
+
+      // Обработчик для копирования
+      document.getElementById('copyButton').addEventListener('click', function() {
+        // При копировании берем оригинальный markdown-текст
+        navigator.clipboard.writeText(markdownContent).then(function() {
+          // Show toast notification
+          const toast = new bootstrap.Toast(document.getElementById('toast'));
+          document.getElementById('toastTitle').textContent = 'Copied';
+          document.getElementById('toastMessage').textContent = 'Summary copied to clipboard';
+          toast.show();
+        });
+      });
+    {% else %}
+      // Функция для обновления статуса задачи
+      function updateTaskStatus() {
+        fetch('/api/task/{{ summary.task_id }}/status')
+          .then(response => response.json())
+          .then(data => {
+            const status = data.status;
+            const progressBar = document.getElementById('progress-bar');
+            const statusMessage = document.getElementById('status-message');
+
+            // Сбрасываем все активные классы
+            document.querySelectorAll('.step').forEach(step => {
+              step.classList.remove('active', 'completed');
+            });
+
+            let progressPercent = 0;
+
+            // Устанавливаем классы и прогресс в зависимости от статуса
+            if (status === 'transcribing') {
+              document.getElementById('step-transcribing').classList.add('active');
+              statusMessage.textContent = 'Transcribing your audio...';
+              progressPercent = 25;
+            } else if (status === 'transcribed') {
+              document.getElementById('step-transcribing').classList.add('completed');
+              document.getElementById('step-aligning').classList.add('active');
+              statusMessage.textContent = 'Aligning transcription...';
+              progressPercent = 50;
+            } else if (status === 'summarizing') {
+              document.getElementById('step-transcribing').classList.add('completed');
+              document.getElementById('step-aligning').classList.add('completed');
+              document.getElementById('step-diarizing').classList.add('completed');
+              document.getElementById('step-summarizing').classList.add('active');
+              statusMessage.textContent = 'Creating summary...';
+              progressPercent = 75;
+            } else if (status === 'completed') {
+              // Готово - перезагружаем страницу для отображения результата
+              window.location.reload();
+              return;
+            } else if (status === 'failed') {
+              statusMessage.textContent = 'Processing failed. Please try again.';
+              progressPercent = 100;
+              progressBar.classList.remove('progress-bar-animated');
+              progressBar.classList.add('bg-danger');
+            }
+
+            // Анимируем прогресс-бар
+            progressBar.style.width = progressPercent + '%';
+
+            // Если обработка еще не завершена, продолжаем опрашивать статус
+            if (status !== 'completed' && status !== 'failed') {
+              setTimeout(updateTaskStatus, 3000);
+            }
+          })
+          .catch(error => {
+            console.error('Error fetching task status:', error);
+            setTimeout(updateTaskStatus, 5000);
+          });
+      }
+
+      // Запускаем обновление статуса
+      updateTaskStatus();
+    {% endif %}
   });
 </script>
 {% endblock %}

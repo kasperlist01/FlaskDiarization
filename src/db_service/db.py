@@ -65,22 +65,12 @@ class DatabaseService:
             CREATE TABLE IF NOT EXISTS summaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id TEXT NOT NULL,
-                chunk_index INTEGER,
                 summary TEXT,
                 completed_at TEXT,
                 FOREIGN KEY (task_id) REFERENCES tasks(task_id)
             )
             ''')
 
-            # Таблица для хранения финального отчета
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS final_reports (
-                task_id TEXT PRIMARY KEY,
-                report TEXT,
-                completed_at TEXT,
-                FOREIGN KEY (task_id) REFERENCES tasks(task_id)
-            )
-            ''')
 
             conn.commit()
 
@@ -246,52 +236,26 @@ class DatabaseService:
                 result['result'] = json.loads(result['result'])
             return result['result']
 
-    def save_summary_chunk(self, task_id, chunk_index, summary):
-        """Сохранение части саммари"""
+    def save_summary(self, task_id, summary):
+        """Сохранение саммари"""
         now = datetime.now().isoformat()
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-            INSERT INTO summaries (task_id, chunk_index, summary, completed_at)
-            VALUES (?, ?, ?, ?)
-            ''', (task_id, chunk_index, summary, now))
-
-            conn.commit()
-
-    def get_summary_chunks(self, task_id):
-        """Получение всех частей саммари для задачи"""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-            SELECT chunk_index, summary, completed_at
-            FROM summaries
-            WHERE task_id = ?
-            ORDER BY chunk_index
-            ''', (task_id,))
-
-            return [dict(row) for row in cursor.fetchall()]
-
-    def save_final_report(self, task_id, report):
-        """Сохранение финального отчета"""
-        now = datetime.now().isoformat()
-
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-            INSERT OR REPLACE INTO final_reports (task_id, report, completed_at)
+            INSERT INTO summaries (task_id, summary, completed_at)
             VALUES (?, ?, ?)
-            ''', (task_id, report, now))
+            ''', (task_id, summary, now))
 
             conn.commit()
 
-    def get_final_report(self, task_id):
-        """Получение финального отчета по ID задачи"""
+    def get_summary(self, task_id):
+        """Получение саммари по ID задачи"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-            SELECT report, completed_at
-            FROM final_reports
+            SELECT summary, completed_at
+            FROM summaries
             WHERE task_id = ?
             ''', (task_id,))
 
@@ -316,13 +280,9 @@ class DatabaseService:
         if diarization_result:
             task_info['diarization_result'] = diarization_result
 
-        summary_chunks = self.get_summary_chunks(task_id)
-        if summary_chunks:
-            task_info['summary_chunks'] = summary_chunks
-
-        final_report = self.get_final_report(task_id)
-        if final_report:
-            task_info['final_report'] = final_report
+        summary = self.get_summary(task_id)
+        if summary:
+            task_info['summary'] = summary
 
         return task_info
 
@@ -373,8 +333,7 @@ class DatabaseService:
                 'transcriptions',
                 'transcription_details',
                 'diarization_results',
-                'summaries',
-                'final_reports'
+                'summaries'
             ]
 
             for table in tables:
